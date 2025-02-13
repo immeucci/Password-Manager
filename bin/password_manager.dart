@@ -1,7 +1,9 @@
 import 'package:password_manager/password_maker.dart' as pass_gen;
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:convert/convert.dart';
-import 'package:argon2/argon2.dart';
+import 'package:argon2/argon2.dart' as argon2;
+import 'package:pointycastle/export.dart'
+    show PBKDF2KeyDerivator, HMac, SHA256Digest, Pbkdf2Parameters;
 import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:math';
@@ -34,21 +36,24 @@ Future<void> manager() async {
 
     File file = File('passwords.json');
 
-    print('1. Add a new password\n2. Find a password');
-    String input = stdin.readLineSync() ?? '';
-    while (input != '1' && input != '2') {
-      print("Invalid input. Please try again.");
-      input = stdin.readLineSync() ?? '';
-    }
+    do {
+      print('1. Add a new password\n2. Find a password');
+      String input = stdin.readLineSync() ?? '';
+      if (input == '3') break;
+      while (input != '1' && input != '2') {
+        print("Invalid input. Please try again.");
+        input = stdin.readLineSync() ?? '';
+      }
 
-    switch (input) {
-      case '1':
-        await addNewPassword(file);
-        break;
-      case '2':
-        await findPassword(file);
-        break;
-    }
+      switch (input) {
+        case '1':
+          await addNewPassword(file);
+          break;
+        case '2':
+          await findPassword(file);
+          break;
+      }
+    } while (true);
   } else {
     print("Access denied.");
   }
@@ -64,30 +69,47 @@ Future<void> addNewPassword(File file) async {
   print('Creating a password for $service...');
   String password = pass_gen.passGen();
 
-  final cryptedPassword = encryptPassword(password, file);
-
-  Map<String, dynamic> data = jsonDecode(await file.readAsString());
-  data['passwords'].add({"service": service, "password": cryptedPassword});
-  await file.writeAsString(jsonEncode(data));
-  print('$service password saved successfully.');
+  await encryptPassword(service, password, file);
 }
 
 Future<void> findPassword(File file) async {
-  print('Insert the service name:');
-  String service = stdin.readLineSync() ?? '';
-  while (service.isEmpty) {
-    print('Service name cannot be empty. Please try again.');
-    service = stdin.readLineSync() ?? '';
-  }
-
-  Map<String, dynamic> data = jsonDecode(await file.readAsString());
-  for (var password in data['passwords']) {
-    if (password['service'] == service) {
-      print('Password for $service: ${password['password']}');
-      return;
+  try {
+    print('Insert the service name:');
+    String service = stdin.readLineSync() ?? '';
+    while (service.isEmpty) {
+      print('Service name cannot be empty. Please try again.');
+      service = stdin.readLineSync() ?? '';
     }
+
+    Map<String, dynamic> data = jsonDecode(await file.readAsString());
+    Uint8List? salt;
+    var masterPassword = '';
+
+    for (var password in data['passwords']) {
+      if (password['service'] == 'master') {
+        salt = Uint8List.fromList(hex.decode(password['salt']));
+        masterPassword = password['password'];
+      }
+
+      if (password['service'] == service && salt != null) {
+        final key = deriveKey(masterPassword, salt, 32); // 32 bytes = 256 bits
+        final iv = encrypt.IV.fromBase64(password['iv']);
+
+        final encrypter = encrypt.Encrypter(encrypt.AES(encrypt.Key(key)));
+
+        try {
+          final decrypted = encrypter.decrypt64(password['password'], iv: iv);
+          print('Password found: $decrypted');
+        } catch (e) {
+          print('An error occurred during decryption: $e');
+        }
+        return;
+      }
+    }
+    print('No password found for $service.');
+  } on Exception catch (e) {
+    print('An error occurred: $e');
   }
-  print('No password found for $service.');
 }
 
 Future<bool> accessControll() async {
@@ -152,22 +174,22 @@ Future<bool> accessControll() async {
 
 Future<String> passwordHashing(String password, Uint8List salt) async {
   try {
-    final parameters = Argon2Parameters(
-      Argon2Parameters.ARGON2_id,
+    final parameters = argon2.Argon2Parameters(
+      argon2.Argon2Parameters.ARGON2_id,
       salt,
-      version: Argon2Parameters.ARGON2_VERSION_13,
+      version: argon2.Argon2Parameters.ARGON2_VERSION_13,
       iterations: 6,
       memoryPowerOf2: 16,
     );
 
-    final argon2 = Argon2BytesGenerator();
+    final argon2Generator = argon2.Argon2BytesGenerator();
 
-    argon2.init(parameters);
+    argon2Generator.init(parameters);
 
     final passwordBytes = parameters.converter.convert(password);
 
     var result = Uint8List(32);
-    argon2.generateBytes(passwordBytes, result, 0, result.length);
+    argon2Generator.generateBytes(passwordBytes, result, 0, result.length);
 
     return hex.encode(result);
   } catch (e) {
@@ -181,28 +203,51 @@ Uint8List generateSalt([int length = 16]) {
   return Uint8List.fromList(List.generate(length, (_) => random.nextInt(256)));
 }
 
-Future<String> encryptPassword(String password, File file) async {
-  print(password);
+Future<void> encryptPassword(String service, String password, File file) async {
   try {
     final fileContent = file.readAsStringSync();
 
     Map<String, dynamic> data = jsonDecode(fileContent);
+    bool masterPasswordFound = false;
+    List<Map<String, String>> newPasswords = [];
+
     for (var passwordEntry in data['passwords']) {
       if (passwordEntry['service'] == 'master') {
-        final key = encrypt.Key.fromUtf8(passwordEntry['password']);
+        masterPasswordFound = true;
+        final salt = Uint8List.fromList(hex.decode(passwordEntry['salt']));
+        final key = deriveKey(
+            passwordEntry['password'], salt, 32); // 32 bytes = 256 bits
         final iv = encrypt.IV.fromLength(16);
 
-        final encrypter = encrypt.Encrypter(encrypt.AES(key));
+        final encrypter = encrypt.Encrypter(encrypt.AES(encrypt.Key(key)));
 
         final encrypted = encrypter.encrypt(password, iv: iv);
 
         print('Password encrypted successfully.');
-        return encrypted.base64;
+
+        newPasswords.add({
+          "service": service,
+          "password": encrypted.base64,
+          "iv": iv.base64
+        });
       }
     }
-    throw Exception('Master password not found.');
+
+    if (!masterPasswordFound) {
+      throw Exception('Master password not found.');
+    }
+
+    data['passwords'].addAll(newPasswords);
+    await file.writeAsString(jsonEncode(data));
+    print('$service password saved successfully.');
   } catch (e) {
     print('An error occurred while encrypting the password: $e');
     throw Exception('Encryption failed');
   }
+}
+
+Uint8List deriveKey(String password, Uint8List salt, int length) {
+  final pbkdf2 = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64))
+    ..init(Pbkdf2Parameters(salt, 100000, length));
+  return pbkdf2.process(utf8.encode(password));
 }
