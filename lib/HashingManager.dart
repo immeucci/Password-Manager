@@ -4,7 +4,8 @@ import 'package:argon2/argon2.dart' as argon2;
 import 'package:convert/convert.dart';
 
 class HashingManager {
-  // Metodo per generare un hash della password con un salt
+  /// Generates a hash of the given [password] using the provided [salt].
+  /// Returns the hexadecimal string representation of the hash.
   Future<String> hashPassword(String password, Uint8List salt) async {
     try {
       final parameters = argon2.Argon2Parameters(
@@ -19,10 +20,8 @@ class HashingManager {
       argon2Generator.init(parameters);
 
       final passwordBytes = parameters.converter.convert(password);
-
       var result = Uint8List(32);
       argon2Generator.generateBytes(passwordBytes, result, 0, result.length);
-
       return hex.encode(result);
     } catch (e) {
       print('Error hashing password: $e');
@@ -30,14 +29,14 @@ class HashingManager {
     }
   }
 
-  // Metodo per verificare se la password data corrisponde all'hash memorizzato
+  /// Verifies if the [inputPassword] matches the [storedHash] using the provided [salt].
   Future<bool> verifyPassword(
       String inputPassword, String storedHash, Uint8List salt) async {
     final hash = await hashPassword(inputPassword, salt);
     return hash == storedHash;
   }
 
-  // Metodo per generare un salt casuale
+  /// Generates a random salt of the specified [length] in bytes.
   Uint8List generateSalt([int length = 16]) {
     final random = Random.secure();
     return Uint8List.fromList(

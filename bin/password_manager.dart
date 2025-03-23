@@ -12,202 +12,191 @@ import 'dart:math';
 import 'dart:io';
 
 void main() {
+  // Print welcome message and main menu options.
   print('Welcome to the password manager!');
-
   print('1. Generate a password\n2. Access the manager');
-  final input = _getUserInput(['1', '2']);
+  final String input = _getUserInput(['1', '2']);
 
   if (input == '1') {
+    // Generate a password using the external password generator.
     print('Generated password: ${pass_gen.passGen()}');
   } else {
+    // Proceed to access the manager.
     print('Accessing the manager...');
     manager();
   }
 }
 
+/// Main manager function that handles user authentication and options.
 Future<void> manager() async {
-  if (!await accessControll()) {
+  if (!await accessControl()) {
     print('Access denied.');
     return;
   }
 
   print('Access granted.');
-  final file = File('passwords.json');
+  final File file = File('passwords.json');
+  final JsonManager jsonManager = JsonManager(file);
 
-  do {
+  // Main loop for the manager options.
+  while (true) {
     print(
       '1. Add a new password\n2. Find a password\n3. Delete the password manager file\n4. Exit',
     );
-    final input = _getUserInput(['1', '2', '3', '4']);
+    final String input = _getUserInput(['1', '2', '3', '4']);
 
     if (input == '4') break;
 
     switch (input) {
       case '1':
-        await addNewPassword(file);
+        await addNewPassword(jsonManager);
         break;
       case '2':
-        await findPassword(file);
+        await findPassword(jsonManager);
         break;
       case '3':
         print("ARE YOU SURE YOU WANT TO DELETE ALL YOUR DATA? (yes/no)");
-        final confirm = _getUserInput(['yes', 'no']);
+        final String confirm = _getUserInput(['yes', 'no']);
         if (confirm == 'yes') {
           await file.delete();
           print(
-            'File deleted.\nYou will be able to create a new one next time you access the manager.',
-          );
+              'File deleted. You can create a new one next time you  access the manager.');
+          exit(1);
+        } else {
+          print('File deletion cancelled.');
+          break;
         }
-        exit(0);
     }
-  } while (true);
-}
-
-Future<bool> accessControll() async {
-  JsonManager jsonManager = JsonManager(File('passwords.json'));
-  HashingManager hashingManager = HashingManager();
-  try {
-    final File file = File('passwords.json');
-
-    if (!await file.exists()) {
-      print('First time using the manager. Creating a new file...');
-      await file.create();
-
-      final String masterPassword =
-          _getNonEmptyInput('Insert the master password:');
-      final Uint8List salt = generateSalt();
-
-      final data = {
-        'passwords': [
-          {
-            'service': 'master',
-            'password': await hashingManager.hashPassword(masterPassword, salt),
-            'salt': hex.encode(salt),
-          },
-        ],
-      };
-
-      jsonManager.writeJsonFile(data);
-      print('Master password saved successfully.');
-      return true;
-    } else {
-      final String masterPassword = _getNonEmptyInput(
-        'Please insert the master password:',
-      );
-      final Map<String, dynamic> data = await jsonManager.readJsonFile();
-      final Uint8List salt = Uint8List.fromList(
-        hex.decode(data['passwords'][0]['salt']),
-      );
-
-      if (await hashingManager.verifyPassword(
-        masterPassword,
-        data['passwords'][0]['password'],
-        salt,
-      )) {
-        return true;
-      }
-      return false;
-    }
-  } on IOException catch (e) {
-    print('File error: $e');
-    return false;
-  } catch (e) {
-    print('An unexpected error occurred: $e');
-    return false;
   }
 }
 
-Future<void> addNewPassword(File file) async {
+/// Performs access control by verifying the master password.
+/// If the file does not exist, creates it with the master password and salt.
+Future<bool> accessControl() async {
+  final File file = File('passwords.json');
+  final JsonManager jsonManager = JsonManager(file);
+  final HashingManager hashingManager = HashingManager();
+
+  if (!await file.exists()) {
+    // First time usage: create new file and save master password.
+    print('First time using the manager. Creating a new file...');
+    await file.create();
+
+    final String masterPassword =
+        _getNonEmptyInput('Insert the master password:');
+    final Uint8List salt = generateSalt();
+
+    final data = {
+      // Store master password info under 'master' key.
+      'master': {
+        'password': await hashingManager.hashPassword(masterPassword, salt),
+        'salt': hex.encode(salt),
+      },
+      // Initialize empty list for service passwords.
+      'passwords': []
+    };
+
+    await jsonManager.writeJsonFile(data);
+    print('Master password saved successfully.');
+    return true;
+  }
+
+  // If file exists, verify the master password.
+  final Map<String, dynamic> data = await jsonManager.readJsonFile();
+  final String masterPassword =
+      _getNonEmptyInput('Insert the master password:');
+
+  if (!data.containsKey('master')) {
+    print('Master password entry is missing or corrupted.');
+    return false;
+  }
+
+  final Uint8List salt = Uint8List.fromList(hex.decode(data['master']['salt']));
+  if (await hashingManager.verifyPassword(
+      masterPassword, data['master']['password'], salt)) {
+    return true;
+  }
+  return false;
+}
+
+/// Adds a new service password by encrypting it and saving it to the JSON file.
+Future<void> addNewPassword(JsonManager jsonManager) async {
   final String service = _getNonEmptyInput('Insert the service name:');
-  print('Creating a password for $service...');
+  // Generate a password using the external generator.
   final String password = pass_gen.passGen();
-  await encryptPassword(service, password, file);
+  await encryptPassword(service, password, jsonManager);
 }
 
-Future<void> findPassword(File file) async {
-  try {
-    final service = _getNonEmptyInput('Insert the service name:');
-    final data = await JsonManager(file).readJsonFile();
-    Uint8List? salt;
-    var masterPassword = '';
+/// Searches for a service password in the JSON file and decrypts it.
+Future<void> findPassword(JsonManager jsonManager) async {
+  final String service = _getNonEmptyInput('Insert the service name:');
+  final Map<String, dynamic> data = await jsonManager.readJsonFile();
 
-    for (final password in data['passwords']) {
-      if (password['service'] == 'master') {
-        salt = Uint8List.fromList(hex.decode(password['salt']));
-        masterPassword = password['password'];
-      }
-
-      if (password['service'] == service && salt != null) {
-        final key = deriveKey(masterPassword, salt, 32); // 32 bytes = 256 bits
-        final iv = encrypt.IV.fromBase64(password[
-            'iv']); // Assicurati che l'IV venga decodificato correttamente da base64
-
-        final decrypted = EncryptionManager().decryptData(
-          password['password'],
-          key,
-          iv,
-        );
-        print('Password found: $decrypted');
-
-        return;
-      }
-    }
-    print('No password found for $service.');
-  } on FormatException catch (e) {
-    print('Error parsing JSON: $e');
-  } on IOException catch (e) {
-    print('File read error: $e');
-  } catch (e) {
-    print('An unexpected error occurred: $e');
+  if (!data.containsKey('passwords')) {
+    print('No passwords stored.');
+    return;
   }
+
+  // Search for the password entry matching the service.
+  final dynamic entry = (data['passwords'] as List).firstWhere(
+    (element) => element['service'] == service,
+    orElse: () => null,
+  );
+
+  if (entry == null) {
+    print('No password found for $service.');
+    return;
+  }
+
+  final String encryptedPassword = entry['password'];
+  final String ivBase64 = entry['iv'];
+  final Uint8List key = await deriveMasterKey(jsonManager);
+  final encrypt.IV iv = encrypt.IV.fromBase64(ivBase64);
+
+  final String decrypted =
+      EncryptionManager().decryptData(encryptedPassword, key, iv);
+  print('Password found: $decrypted');
 }
 
-Uint8List generateSalt([int length = 16]) {
-  final random = Random.secure();
-  return Uint8List.fromList(List.generate(length, (_) => random.nextInt(256)));
-}
-
-Future<void> encryptPassword(String service, String password, File file) async {
+/// Encrypts a service password and updates the JSON file with the new entry.
+Future<void> encryptPassword(
+    String service, String password, JsonManager jsonManager) async {
   try {
-    final fileContent = file.readAsStringSync();
-    final data = jsonDecode(fileContent) as Map<String, dynamic>;
-    bool masterPasswordFound = false;
-    final List<Map<String, String>> newPasswords = [];
+    final Map<String, dynamic> data = await jsonManager.readJsonFile();
 
-    for (final passwordEntry in data['passwords']) {
-      if (passwordEntry['service'] == 'master') {
-        masterPasswordFound = true;
-        final salt = Uint8List.fromList(hex.decode(passwordEntry['salt']));
-        final key = deriveKey(passwordEntry['password'], salt, 32);
+    // Derive encryption key from master password stored in JSON.
+    final Uint8List key = await deriveMasterKey(jsonManager);
+    // Generate a random IV for AES.
+    final encrypt.IV iv = encrypt.IV.fromLength(16);
 
-        // Aggiungi la generazione dell'IV (Initialization Vector)
-        final iv = encrypt.IV.fromLength(16); // Genera un IV casuale di 16 byte
-        final encrypted = EncryptionManager().encryptData(password, key, iv);
+    // Encrypt the service password.
+    final String encrypted = EncryptionManager().encryptData(password, key, iv);
+    // Create a new entry for the service password.
+    final Map<String, dynamic> newEntry = {
+      'service': service,
+      'password': encrypted,
+      'iv': iv.base64,
+    };
 
-        print('Password encrypted successfully.');
+    // Add new entry to the 'passwords' list.
+    (data['passwords'] as List).add(newEntry);
+    await jsonManager.writeJsonFile(data);
 
-        newPasswords.add({
-          'service': service,
-          'password': encrypted,
-          'iv': iv
-              .base64, // Assicurati che l'IV venga salvato correttamente in base64
-        });
-      }
-    }
-
-    if (!masterPasswordFound) {
-      throw Exception('Master password not found.');
-    }
-
-    for (var passwordData in newPasswords) {
-      await JsonManager(file).updateJsonFile(passwordData);
-    }
     print('$service password saved successfully.');
   } catch (e) {
     print('Error encrypting password: $e');
   }
 }
 
+/// Derives the master key from the stored master password and salt.
+Future<Uint8List> deriveMasterKey(JsonManager jsonManager) async {
+  final Map<String, dynamic> data = await jsonManager.readJsonFile();
+  final Uint8List salt = Uint8List.fromList(hex.decode(data['master']['salt']));
+  // Derive key using PBKDF2 based on the stored master password hash.
+  return deriveKey(data['master']['password'], salt, 32);
+}
+
+/// Reads user input ensuring it is one of the [validInputs].
 String _getUserInput(List<String> validInputs) {
   String input;
   do {
@@ -216,6 +205,7 @@ String _getUserInput(List<String> validInputs) {
   return input;
 }
 
+/// Reads user input until a non-empty string is entered.
 String _getNonEmptyInput(String message) {
   print(message);
   String input;
@@ -225,8 +215,18 @@ String _getNonEmptyInput(String message) {
   return input;
 }
 
+/// Computes a derived key using PBKDF2 with SHA-256.
+/// [password]: the input password string.
+/// [salt]: the salt bytes.
+/// [length]: the desired length of the derived key in bytes.
 Uint8List deriveKey(String password, Uint8List salt, int length) {
   final pbkdf2 = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64))
     ..init(Pbkdf2Parameters(salt, 100000, length));
   return pbkdf2.process(utf8.encode(password));
+}
+
+/// Generates a random salt of [length] bytes.
+Uint8List generateSalt([int length = 16]) {
+  final random = Random.secure();
+  return Uint8List.fromList(List.generate(length, (_) => random.nextInt(256)));
 }
