@@ -1,13 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 
+/// A class that manages reading from and writing to a JSON file.
 class JsonManager {
+  /// The file that stores the JSON data.
   final File file;
 
+  /// Constructor that initializes the JsonManager with the given [file].
   JsonManager(this.file);
 
-  /// Reads and returns the JSON content from the file as a Map.
-  /// If the file does not exist or is empty, returns an empty Map.
+  /// Reads the JSON data from the file.
+  /// Returns a Map representing the JSON data, or an empty Map if the file is empty or not valid.
   Future<Map<String, dynamic>> readJsonFile() async {
     try {
       if (!await file.exists()) {
@@ -32,7 +35,7 @@ class JsonManager {
     }
   }
 
-  /// Writes the provided [data] Map to the file as JSON.
+  /// Writes the given [data] as JSON to the file, overwriting existing content.
   Future<void> writeJsonFile(Map<String, dynamic> data) async {
     try {
       final jsonString = jsonEncode(data);
@@ -44,15 +47,20 @@ class JsonManager {
     }
   }
 
-  /// Updates the JSON file by adding the [newData] to the 'passwords' list.
-  /// If the 'passwords' key does not exist or is not a list, it initializes it.
+  /// Updates the JSON file by adding the [newData] to the existing 'passwords' list.
+  /// If the 'passwords' list does not exist, it is created.
   Future<void> updateJsonFile(Map<String, dynamic> newData) async {
     try {
       Map<String, dynamic> data = await readJsonFile();
+
+      // Ensure 'passwords' is a list in the JSON data.
       if (!data.containsKey('passwords') || data['passwords'] is! List) {
         data['passwords'] = [];
       }
+
+      // Add the newData to the passwords list.
       (data['passwords'] as List).add(newData);
+
       final jsonString = jsonEncode(data);
       await file.writeAsString(jsonString);
     } on IOException catch (e) {
