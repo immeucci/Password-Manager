@@ -31,3 +31,6 @@ dart pub get
 ```bash
 dart run
 ```
+
+## Usage
+- when the program is run 2 options will be shown
