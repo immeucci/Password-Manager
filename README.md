@@ -33,4 +33,14 @@ dart run
 ```
 
 ## Usage
-- when the program is run 2 options will be shown
+- when the program is run 2 options will be shown in the command line interface
+1. If you select the first option you can create a password using the generator
+2. If you select the second option you enter the password manager:
+
+### Password Manager
+- The first time you access the password manager you have to create a master password, you need to remember it to access the manager a second time.
+- Once you insert the master password you have 4 options:
+1. Create a new password
+2. Find a password associated with the reltive service name
+3. Delete the password file.
+4. Exit the manager
