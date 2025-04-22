@@ -40,7 +40,14 @@ dart run
 ### Password Manager
 - The first time you access the password manager you have to create a master password, you need to remember it to access the manager a second time.
 - Once you insert the master password you have 4 options:
-1. Create a new password
-2. Find a password associated with the relative service name
-3. Delete the password file.
+1. Create a new password.  
+   A strong password is generated and encrypted using AES-256, then stored in a local JSON file along with the service name.
+2. Find a password associated with the relative service name.  
+   Retrieve the password associated with a given service name, decrypted securely after authentication. 
+3. Delete the password file.  
+   This action will permanently delete the passwords.json file, removing all stored data.
 4. Exit the manager
+
+## Disclaimer
+This project is intended for educational purposes and personal use.
+Always take extra steps to ensure the safety of your data and don't store highly sensitive information in plain JSON files without additional protections.
